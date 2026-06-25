@@ -763,6 +763,74 @@ function renderAll(){
 // ═══════════════════════════════════════════════
 // RENDER: DASHBOARD
 // ═══════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════
+// BREAK FEATURE
+// ═══════════════════════════════════════════════
+var BREAKS_KEY = 'to_agent_breaks';
+var agentBreaks = JSON.parse(localStorage.getItem(BREAKS_KEY) || '{}');
+
+function saveBreaks() {
+  localStorage.setItem(BREAKS_KEY, JSON.stringify(agentBreaks));
+}
+
+function _parseMinsFromStr(t) {
+  var m = t.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)$/i);
+  if (!m) return null;
+  var h = parseInt(m[1]), min = parseInt(m[2]), ap = m[3].toUpperCase();
+  if (ap === 'AM' && h === 12) h = 0;
+  if (ap === 'PM' && h !== 12) h += 12;
+  return h * 60 + min;
+}
+
+function isOnBreak(agentName) {
+  var brk = agentBreaks[agentName];
+  if (!brk || !brk.start || !brk.end) return false;
+  var now = new Date();
+  var nowMins = now.getHours() * 60 + now.getMinutes();
+  var sm = _parseMinsFromStr(brk.start);
+  var em = _parseMinsFromStr(brk.end);
+  if (sm === null || em === null) return false;
+  if (em < sm) return nowMins >= sm || nowMins <= em;
+  return nowMins >= sm && nowMins <= em;
+}
+
+function openBreakModal(agentName) {
+  var el = document.getElementById('modal-break');
+  if (!el) return;
+  window._currentBreakAgent = agentName;
+  document.getElementById('break-agent-name').textContent = agentName;
+  document.getElementById('break-modal-title').textContent = 'Set Break — ' + agentName;
+  var brk = agentBreaks[agentName] || {};
+  document.getElementById('break-start').value = brk.start || '';
+  document.getElementById('break-end').value = brk.end || '';
+  el.classList.add('open');
+}
+
+function saveBreak() {
+  var name = window._currentBreakAgent;
+  if (!name) return;
+  var start = document.getElementById('break-start').value.trim();
+  var end = document.getElementById('break-end').value.trim();
+  var re = /^\d{1,2}:\d{2}\s*(AM|PM|am|pm)$/i;
+  if (!re.test(start) || !re.test(end)) { toast('Invalid format. Use HH:MM AM/PM (e.g. 01:00 PM)'); return; }
+  agentBreaks[name] = { start: start, end: end };
+  saveBreaks();
+  closeModal('modal-break');
+  toast(name + "'s break set: " + start + " – " + end);
+  renderDashboard();
+}
+
+function clearBreak() {
+  var name = window._currentBreakAgent;
+  if (!name) return;
+  delete agentBreaks[name];
+  saveBreaks();
+  closeModal('modal-break');
+  toast(name + "'s break cleared");
+  renderDashboard();
+}
+
 function renderDashboard(){
   var today=new Date();
   document.getElementById("sb-date").textContent=today.toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short",year:"numeric"});
@@ -791,23 +859,32 @@ function renderDashboard(){
   var cards="";
   active.forEach(function(a){
     var st=aStat(a,today);
-    var dotCol=st==="working"?"#16A34A":st==="leave"?"#DC2626":st==="off"?"#D97706":"#9CA3AF";
+    var onBreakNow=(st==="working")&&isOnBreak(a.name);
+    var brk=agentBreaks[a.name]||{};
+    var dotCol=onBreakNow?"#F59E0B":st==="working"?"#16A34A":st==="leave"?"#DC2626":st==="off"?"#D97706":"#9CA3AF";
     var lv=leaves.find(function(l){
       if(l.agent!==a.name)return false;
       var f=new Date(l.from),t=new Date(l.to);f.setHours(0,0,0,0);t.setHours(23,59,59,999);
       return today>=f&&today<=t;
     });
+    var breakBadge=onBreakNow?'&nbsp;<span class="badge" style="background:#FEF3C7;color:#92400E;border:1px solid #F59E0B;font-weight:700">☕ On Break</span>':'';
+    var safeN=a.name.replace(/'/g,"\'");
+    var breakRow=(brk.start&&brk.end)?
+      '<div class="ag-row" style="cursor:pointer;padding:2px 4px;border-radius:5px;'+(onBreakNow?'background:#FEF9C3;':'')+'" onclick="openBreakModal(''+safeN+'')"><span style="font-size:11px;margin-right:2px">☕</span><span style="font-size:10px;color:'+(onBreakNow?'#92400E':'#6B7280')+';font-weight:'+(onBreakNow?'700':'500')+'">'+brk.start+' – '+brk.end+'</span></div>':
+      '<div class="ag-row" style="cursor:pointer;opacity:0.45;" onclick="openBreakModal(''+safeN+'')"><span style="font-size:10px;color:#9CA3AF">+ Set Break</span></div>';
     cards+='<div class="ag-card">'+
       '<div class="ag-top">'+av(a.name,36)+
       '<div style="min-width:0"><div class="ag-name">'+a.name+'</div><div class="ag-role">'+a.role+'</div></div></div>'+
       '<div class="ag-meta">'+
-      '<div class="ag-row"><span style="width:6px;height:6px;border-radius:50%;background:'+dotCol+';display:inline-block;flex-shrink:0"></span>'+stBadge(st)+(lv?'&nbsp;<span class="badge '+LCLS[lv.type]+'">'+lv.type+'</span>':'')+
+      '<div class="ag-row"><span style="width:6px;height:6px;border-radius:50%;background:'+dotCol+';display:inline-block;flex-shrink:0"></span>'+stBadge(st)+breakBadge+(lv?'&nbsp;<span class="badge '+LCLS[lv.type]+'">'+lv.type+'</span>':'')+
       '</div><div class="ag-row"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span style="font-size:9px;font-weight:700;color:#2563EB;background:#EFF6FF;border-radius:3px;padding:0 3px;margin-right:2px">GST</span>'+a.gst+'</div>'+
       (a.ist&&a.ist!=="-"?'<div class="ag-row"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span style="font-size:9px;font-weight:700;color:#15803D;background:#F0FDF4;border-radius:3px;padding:0 3px;margin-right:2px">IST</span>'+a.ist+'</div>':'')+
       '<div class="ag-row">'+tcChip(a.team)+'&nbsp;<span class="badge '+SCLS[a.shift]+'">'+a.shift+'</span></div>'+
+      breakRow+
       '</div></div>';
   });
   document.getElementById("dash-agents").innerHTML=cards;
+  if(!window._brkRefresh){window._brkRefresh=setInterval(function(){if(document.getElementById('dash-agents'))renderDashboard();},60000);}
 }
 
 // ═══════════════════════════════════════════════
@@ -1881,5 +1958,33 @@ document.querySelector(".layout").style.display="none";
 
 renderDashboard();
 </script>
+
+<!-- BREAK FEATURE MODAL -->
+<div class="modal-bg" id="modal-break">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-title"><span style="font-size:18px;margin-right:6px">☕</span><span id="break-modal-title">Set Break Time</span></div>
+    <div style="margin-bottom:12px">
+      <label style="font-size:12px;font-weight:600;color:#6B7280;display:block;margin-bottom:4px">Agent</label>
+      <div id="break-agent-name" style="font-weight:700;font-size:15px;color:#1F2937"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:8px">
+      <div class="fg">
+        <label>Break Start (GST)</label>
+        <input id="break-start" type="text" placeholder="01:00 PM" />
+      </div>
+      <div class="fg">
+        <label>Break End (GST)</label>
+        <input id="break-end" type="text" placeholder="01:30 PM" />
+      </div>
+    </div>
+    <div style="font-size:11px;color:#9CA3AF;margin-bottom:4px">Format: HH:MM AM/PM &nbsp;(e.g. 01:00 PM)</div>
+    <div class="modal-footer">
+      <button class="btn btn-outline btn-sm" onclick="clearBreak()">Clear</button>
+      <button class="btn btn-outline btn-sm" onclick="closeModal('modal-break')">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="saveBreak()">Save Break</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
